@@ -20,16 +20,13 @@ from bokeh.layouts import row
 # TASK 1: IMPORT GEOSPATIAL DATA
 # ============================================================
 
-url = (
-    "https://earthquake.usgs.gov/earthquakes/feed/v1.0/"
-    "summary/all_month.geojson"
-)
+url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
 
 gdf = gpd.read_file(url)
 
 
 # ============================================================
-# CONVERT TO WEB MERCATOR
+# CONVERT COORDINATES
 # ============================================================
 
 gdf = gdf.to_crs(epsg=3857)
@@ -39,7 +36,7 @@ gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# TIME HANDLING
+# DATE AND TIME
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
@@ -61,7 +58,7 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 
 # ============================================================
-# RISK CLASSIFICATION
+# RISK LEVEL
 # ============================================================
 
 gdf["risk"] = pd.cut(
@@ -76,7 +73,7 @@ gdf["risk"] = pd.cut(
 
 
 # ============================================================
-# PREPARE DATA
+# SELECT REQUIRED COLUMNS
 # ============================================================
 
 df = gdf[
@@ -100,16 +97,14 @@ df = gdf[
 
 
 # ============================================================
-# COLUMN DATA SOURCE
+# TASK 2: BOKEH DATA SOURCE
 # ============================================================
 
-source = ColumnDataSource(
-    data=ColumnDataSource.from_df(df)
-)
+source = ColumnDataSource(df)
 
 
 # ============================================================
-# TASK 2: CREATE BOKEH MAP
+# MAP
 # ============================================================
 
 p = figure(
@@ -129,7 +124,7 @@ p = figure(
 
 
 # ============================================================
-# ADD MAP TILES
+# MAP TILE
 # ============================================================
 
 p.add_tile(
@@ -141,14 +136,12 @@ p.add_tile(
 
 
 # ============================================================
-# TASK 4: COLOUR MAPPING
+# TASK 4: MAGNITUDE COLOUR
 # ============================================================
 
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
-
     low=df["mag"].min(),
-
     high=df["mag"].max()
 )
 
@@ -160,23 +153,15 @@ mapper = LinearColorMapper(
 points = p.scatter(
     x="x",
     y="y",
-
-    size=8,
-
-    marker="circle",
-
     source=source,
-
+    size=8,
+    marker="circle",
     fill_color={
         "field": "mag",
         "transform": mapper
     },
-
-    fill_alpha=0.7,
-
-    line_color="black",
-
-    line_width=0.5
+    fill_alpha=0.8,
+    line_color="black"
 )
 
 
@@ -184,16 +169,11 @@ points = p.scatter(
 # COLOR BAR
 # ============================================================
 
-color_bar = ColorBar(
-    color_mapper=mapper,
-
-    title="Magnitude",
-
-    label_standoff=10
-)
-
 p.add_layout(
-    color_bar,
+    ColorBar(
+        color_mapper=mapper,
+        title="Magnitude"
+    ),
     "right"
 )
 
@@ -202,22 +182,21 @@ p.add_layout(
 # TASK 3: HOVER TOOL
 # ============================================================
 
-hover = HoverTool(
-    renderers=[points],
-
-    tooltips=[
-        ("Location", "@place"),
-        ("Magnitude", "@mag{0.0}"),
-        ("Time", "@time_str"),
-        ("Risk", "@risk")
-    ]
+p.add_tools(
+    HoverTool(
+        renderers=[points],
+        tooltips=[
+            ("Location", "@place"),
+            ("Magnitude", "@mag{0.0}"),
+            ("Time", "@time_str"),
+            ("Risk", "@risk")
+        ]
+    )
 )
-
-p.add_tools(hover)
 
 
 # ============================================================
-# TASK 3: TIME SLIDER
+# TASK 3: TIME FILTER
 # ============================================================
 
 date_slider = DateRangeSlider(
@@ -259,46 +238,86 @@ risk_filter = Select(
 
 
 # ============================================================
-# FILTER CALLBACK
+# TASK 3: FILTER FUNCTION
 # ============================================================
 
 def update(attr, old, new):
 
-    start, end = date_slider.value
+    filtered = df.copy()
 
-    filtered = df[
-        (df["time_dt"] >= pd.to_datetime(start)) &
-        (df["time_dt"] <= pd.to_datetime(end))
-    ]
+    # -------------------------
+    # Risk filtering
+    # -------------------------
 
-    if risk_filter.value != "All":
+    if risk_filter.value == "High Risk":
 
         filtered = filtered[
-            filtered["risk"] == risk_filter.value
+            filtered["risk"] == "High Risk"
         ]
 
-    source.data = ColumnDataSource.from_df(
-        filtered
+    elif risk_filter.value == "Medium Risk":
+
+        filtered = filtered[
+            filtered["risk"] == "Medium Risk"
+        ]
+
+    elif risk_filter.value == "Low Risk":
+
+        filtered = filtered[
+            filtered["risk"] == "Low Risk"
+        ]
+
+
+    # -------------------------
+    # Time filtering
+    # -------------------------
+
+    start = pd.to_datetime(
+        date_slider.value[0]
     )
+
+    end = pd.to_datetime(
+        date_slider.value[1]
+    )
+
+    filtered = filtered[
+        (filtered["time_dt"] >= start) &
+        (filtered["time_dt"] <= end)
+    ]
+
+
+    # -------------------------
+    # Update map
+    # -------------------------
+
+    source.data = {
+        "x": filtered["x"].tolist(),
+        "y": filtered["y"].tolist(),
+        "place": filtered["place"].tolist(),
+        "mag": filtered["mag"].tolist(),
+        "time_dt": filtered["time_dt"].tolist(),
+        "time_str": filtered["time_str"].tolist(),
+        "risk": filtered["risk"].tolist()
+    }
 
 
 # ============================================================
 # CONNECT FILTERS
 # ============================================================
 
-date_slider.on_change(
-    "value_throttled",
-    update
-)
-
 risk_filter.on_change(
     "value",
     update
 )
 
+date_slider.on_change(
+    "value_throttled",
+    update
+)
+
 
 # ============================================================
-# TASK 5: BOKEH SERVER
+# TASK 5: DASHBOARD LAYOUT
 # ============================================================
 
 layout = row(
@@ -306,6 +325,11 @@ layout = row(
     date_slider,
     p
 )
+
+
+# ============================================================
+# BOKEH SERVER
+# ============================================================
 
 curdoc().add_root(layout)
 
