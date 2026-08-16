@@ -17,27 +17,36 @@ from bokeh.layouts import row
 
 
 # ============================================================
-# TASK 1 - IMPORT DATA
+# TASK 1: IMPORT GEOSPATIAL DATA
 # ============================================================
 
 url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
 
 gdf = gpd.read_file(url)
 
-gdf = gdf.to_crs(3857)
+
+# ============================================================
+# CONVERT TO WEB MERCATOR
+# ============================================================
+
+gdf = gdf.to_crs(epsg=3857)
 
 gdf["x"] = gdf.geometry.x
 gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# DATE
+# DATE AND TIME
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
     gdf["time"],
-    unit="ms"
+    unit="ms",
+    errors="coerce"
 )
+
+# Remove timezone
+gdf["time_dt"] = gdf["time_dt"].dt.tz_localize(None)
 
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
     "%Y-%m-%d %H:%M:%S"
@@ -52,7 +61,7 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 
 # ============================================================
-# RISK
+# RISK CLASSIFICATION
 # ============================================================
 
 gdf["risk"] = "Low Risk"
@@ -69,7 +78,7 @@ gdf.loc[
 
 
 # ============================================================
-# DATAFRAME
+# PREPARE DATA
 # ============================================================
 
 df = gdf[
@@ -83,19 +92,23 @@ df = gdf[
         "risk"
     ]
 ].dropna(
-    subset=["x", "y", "time_dt"]
+    subset=[
+        "x",
+        "y",
+        "time_dt"
+    ]
 )
 
 
 # ============================================================
-# BOKEH SOURCE
+# TASK 2: BOKEH DATA SOURCE
 # ============================================================
 
 source = ColumnDataSource(df)
 
 
 # ============================================================
-# MAP
+# CREATE MAP
 # ============================================================
 
 p = figure(
@@ -115,7 +128,7 @@ p = figure(
 
 
 # ============================================================
-# MAP TILES
+# MAP TILE
 # ============================================================
 
 p.add_tile(
@@ -127,7 +140,7 @@ p.add_tile(
 
 
 # ============================================================
-# COLOUR MAPPER
+# TASK 4: MAGNITUDE COLOUR
 # ============================================================
 
 mapper = LinearColorMapper(
@@ -144,8 +157,11 @@ mapper = LinearColorMapper(
 points = p.scatter(
     x="x",
     y="y",
+
     source=source,
+
     size=8,
+
     marker="circle",
 
     fill_color={
@@ -154,6 +170,7 @@ points = p.scatter(
     },
 
     fill_alpha=0.8,
+
     line_color="black"
 )
 
@@ -172,7 +189,7 @@ p.add_layout(
 
 
 # ============================================================
-# HOVER
+# TASK 3: HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -190,7 +207,7 @@ p.add_tools(
 
 
 # ============================================================
-# TIME FILTER
+# TASK 3: TIME FILTER
 # ============================================================
 
 date_slider = DateRangeSlider(
@@ -205,14 +222,14 @@ date_slider = DateRangeSlider(
         df["time_dt"].max()
     ),
 
-    step=86400000,
+    step=24 * 60 * 60 * 1000,
 
     width=300
 )
 
 
 # ============================================================
-# RISK FILTER
+# TASK 3: RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -232,36 +249,29 @@ risk_filter = Select(
 
 
 # ============================================================
-# FILTER
+# TASK 3: FILTER CALLBACK
 # ============================================================
 
-def update():
+def update(attr, old, new):
 
+    # Start with all data
     filtered = df.copy()
 
 
-    # Risk filter
+    # --------------------------------------------------------
+    # RISK FILTER
+    # --------------------------------------------------------
 
-    if risk_filter.value == "High Risk":
-
-        filtered = filtered[
-            filtered["risk"] == "High Risk"
-        ]
-
-    elif risk_filter.value == "Medium Risk":
+    if risk_filter.value != "All":
 
         filtered = filtered[
-            filtered["risk"] == "Medium Risk"
-        ]
-
-    elif risk_filter.value == "Low Risk":
-
-        filtered = filtered[
-            filtered["risk"] == "Low Risk"
+            filtered["risk"] == risk_filter.value
         ]
 
 
-    # Time filter
+    # --------------------------------------------------------
+    # TIME FILTER
+    # --------------------------------------------------------
 
     start = pd.to_datetime(
         date_slider.value[0]
@@ -277,36 +287,37 @@ def update():
     ]
 
 
-    # Update source
+    # --------------------------------------------------------
+    # UPDATE MAP
+    # --------------------------------------------------------
 
-    source.data = {
-        "x": filtered["x"],
-        "y": filtered["y"],
-        "place": filtered["place"],
-        "mag": filtered["mag"],
-        "time_dt": filtered["time_dt"],
-        "time_str": filtered["time_str"],
-        "risk": filtered["risk"]
-    }
+    source.data = ColumnDataSource.from_df(
+        filtered
+    )
 
 
 # ============================================================
-# CALLBACKS
+# CONNECT RISK FILTER
 # ============================================================
 
 risk_filter.on_change(
     "value",
-    lambda attr, old, new: update()
-)
-
-date_slider.on_change(
-    "value",
-    lambda attr, old, new: update()
+    update
 )
 
 
 # ============================================================
-# LAYOUT
+# CONNECT TIME FILTER
+# ============================================================
+
+date_slider.on_change(
+    "value_throttled",
+    update
+)
+
+
+# ============================================================
+# TASK 5: DASHBOARD LAYOUT
 # ============================================================
 
 layout = row(
