@@ -1,0 +1,8 @@
+bokeh==3.9.2
+geopandas
+pandas
+numpy
+shapely
+pyproj
+fiona
+requests
