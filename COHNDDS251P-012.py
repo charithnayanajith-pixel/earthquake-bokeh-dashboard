@@ -41,7 +41,7 @@ gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# 3. DATE / TIME
+# 3. DATE AND TIME
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
@@ -108,7 +108,7 @@ df = gdf[
 
 
 # ============================================================
-# 7. NUMERIC TIME
+# 7. NUMERIC TIME FOR JAVASCRIPT
 # ============================================================
 
 df["time_ms"] = (
@@ -117,19 +117,23 @@ df["time_ms"] = (
 
 
 # ============================================================
-# 8. CREATE TWO DATA SOURCES
-#
-# full_source = original complete data
-# source      = data currently displayed
+# 8. FULL DATA SOURCE
 # ============================================================
 
 full_source = ColumnDataSource(df)
 
-source = ColumnDataSource(df.copy())
+
+# ============================================================
+# 9. DISPLAY DATA SOURCE
+# ============================================================
+
+source = ColumnDataSource(
+    df.copy()
+)
 
 
 # ============================================================
-# 9. CREATE MAP
+# 10. CREATE MAP
 # ============================================================
 
 p = figure(
@@ -144,12 +148,18 @@ p = figure(
     width=900,
     height=600,
 
-    tools="pan,wheel_zoom,box_zoom,reset,save"
+    tools=(
+        "pan,"
+        "wheel_zoom,"
+        "box_zoom,"
+        "reset,"
+        "save"
+    )
 )
 
 
 # ============================================================
-# 10. BASE MAP
+# 11. BASE MAP
 # ============================================================
 
 p.add_tile(
@@ -166,20 +176,24 @@ p.add_tile(
 
 
 # ============================================================
-# 11. COLOUR MAPPER
+# 12. COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
 
-    low=float(df["mag"].min()),
+    low=float(
+        df["mag"].min()
+    ),
 
-    high=float(df["mag"].max())
+    high=float(
+        df["mag"].max()
+    )
 )
 
 
 # ============================================================
-# 12. EARTHQUAKE POINTS
+# 13. EARTHQUAKE POINTS
 # ============================================================
 
 points = p.scatter(
@@ -204,7 +218,7 @@ points = p.scatter(
 
 
 # ============================================================
-# 13. COLOUR BAR
+# 14. COLOUR BAR
 # ============================================================
 
 p.add_layout(
@@ -217,7 +231,7 @@ p.add_layout(
 
 
 # ============================================================
-# 14. HOVER TOOL
+# 15. HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -235,26 +249,32 @@ p.add_tools(
 
 
 # ============================================================
-# 15. FIND MINIMUM AND MAXIMUM DATE
-# ============================================================
-
-min_time = int(df["time_ms"].min())
-
-max_time = int(df["time_ms"].max())
-
-
-# ============================================================
 # 16. DATE RANGE SLIDER
 # ============================================================
+
+min_date = (
+    df["time_dt"]
+    .min()
+    .to_pydatetime()
+)
+
+max_date = (
+    df["time_dt"]
+    .max()
+    .to_pydatetime()
+)
 
 date_slider = DateRangeSlider(
     title="Time Filter",
 
-    start=min_time,
+    start=min_date,
 
-    end=max_time,
+    end=max_date,
 
-    value=(min_time, max_time),
+    value=(
+        min_date,
+        max_date
+    ),
 
     step=24 * 60 * 60 * 1000,
 
@@ -313,22 +333,41 @@ callback = CustomJS(
 
     code="""
 
-    // --------------------------------------------------------
-    // GET ORIGINAL DATA
-    // --------------------------------------------------------
+    // ========================================================
+    // GET COMPLETE DATA
+    // ========================================================
 
     const full = full_source.data;
+
+
+    // ========================================================
+    // GET SELECTED DATE RANGE
+    // ========================================================
 
     const start = slider.value[0];
 
     const end = slider.value[1];
 
+
+    // ========================================================
+    // CONVERT SELECTED DATES TO MILLISECONDS
+    // ========================================================
+
+    const start_ms = new Date(start).getTime();
+
+    const end_ms = new Date(end).getTime();
+
+
+    // ========================================================
+    // GET SELECTED RISK
+    // ========================================================
+
     const selectedRisk = risk_select.value;
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // CREATE EMPTY RESULT
-    // --------------------------------------------------------
+    // ========================================================
 
     const result = {
         x: [],
@@ -342,15 +381,17 @@ callback = CustomJS(
     };
 
 
-    // --------------------------------------------------------
-    // LOOP THROUGH ALL EARTHQUAKES
-    // --------------------------------------------------------
+    // ========================================================
+    // FILTER EARTHQUAKES
+    // ========================================================
 
     for (let i = 0; i < full.x.length; i++) {
 
-        const earthquakeTime = full.time_ms[i];
+        const earthquakeTime =
+            Number(full.time_ms[i]);
 
-        const earthquakeRisk = full.risk[i];
+        const earthquakeRisk =
+            full.risk[i];
 
 
         // ----------------------------------------------------
@@ -358,8 +399,8 @@ callback = CustomJS(
         // ----------------------------------------------------
 
         const timeOK =
-            earthquakeTime >= start &&
-            earthquakeTime <= end;
+            earthquakeTime >= start_ms &&
+            earthquakeTime <= end_ms;
 
 
         // ----------------------------------------------------
@@ -369,58 +410,76 @@ callback = CustomJS(
         let riskOK = true;
 
         if (selectedRisk !== "All") {
-            riskOK = earthquakeRisk === selectedRisk;
+
+            riskOK =
+                earthquakeRisk === selectedRisk;
         }
 
 
         // ----------------------------------------------------
-        // BOTH CONDITIONS
+        // BOTH FILTERS
         // ----------------------------------------------------
 
         if (timeOK && riskOK) {
 
-            result.x.push(full.x[i]);
+            result.x.push(
+                full.x[i]
+            );
 
-            result.y.push(full.y[i]);
+            result.y.push(
+                full.y[i]
+            );
 
-            result.place.push(full.place[i]);
+            result.place.push(
+                full.place[i]
+            );
 
-            result.mag.push(full.mag[i]);
+            result.mag.push(
+                full.mag[i]
+            );
 
-            result.time_dt.push(full.time_dt[i]);
+            result.time_dt.push(
+                full.time_dt[i]
+            );
 
-            result.time_str.push(full.time_str[i]);
+            result.time_str.push(
+                full.time_str[i]
+            );
 
-            result.risk.push(full.risk[i]);
+            result.risk.push(
+                full.risk[i]
+            );
 
-            result.time_ms.push(full.time_ms[i]);
+            result.time_ms.push(
+                full.time_ms[i]
+            );
         }
     }
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // UPDATE MAP
-    // --------------------------------------------------------
+    // ========================================================
 
     source.data = result;
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // UPDATE STATUS
-    // --------------------------------------------------------
+    // ========================================================
 
     status.text =
-        "<b>Risk:</b> " +
-        selectedRisk +
-        "<br>" +
-        "<b>Earthquakes shown:</b> " +
-        result.x.length;
+        "<b>Risk:</b> "
+        + selectedRisk
+        + "<br>"
+        + "<b>Earthquakes shown:</b> "
+        + result.x.length;
     """
 )
 
 
 # ============================================================
-# 20. CONNECT CALLBACK TO RISK FILTER
+# 20. RISK FILTER CALLBACK
 # ============================================================
 
 risk_filter.js_on_change(
@@ -430,7 +489,7 @@ risk_filter.js_on_change(
 
 
 # ============================================================
-# 21. CONNECT CALLBACK TO TIME SLIDER
+# 21. TIME SLIDER CALLBACK
 # ============================================================
 
 date_slider.js_on_change(
@@ -451,7 +510,7 @@ controls = column(
 
 
 # ============================================================
-# 23. FINAL DASHBOARD
+# 23. FINAL LAYOUT
 # ============================================================
 
 layout = row(
@@ -466,4 +525,6 @@ layout = row(
 
 curdoc().add_root(layout)
 
-curdoc().title = "USGS Earthquake Dashboard"
+curdoc().title = (
+    "USGS Earthquake Dashboard"
+)
