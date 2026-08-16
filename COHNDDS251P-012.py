@@ -32,7 +32,7 @@ gdf = gpd.read_file(url)
 # CONVERT TO WEB MERCATOR
 # ============================================================
 
-gdf = gdf.to_crs(3857)
+gdf = gdf.to_crs(epsg=3857)
 
 gdf["x"] = gdf.geometry.x
 gdf["y"] = gdf.geometry.y
@@ -48,6 +48,9 @@ gdf["time_dt"] = pd.to_datetime(
     errors="coerce"
 )
 
+# Remove timezone information
+gdf["time_dt"] = gdf["time_dt"].dt.tz_localize(None)
+
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
     "%Y-%m-%d %H:%M:%S"
 )
@@ -56,6 +59,11 @@ gdf["time_str"] = gdf["time_dt"].dt.strftime(
 # ============================================================
 # MAGNITUDE
 # ============================================================
+
+gdf["mag"] = pd.to_numeric(
+    gdf["mag"],
+    errors="coerce"
+)
 
 gdf["mag"] = gdf["mag"].fillna(0)
 
@@ -101,11 +109,30 @@ df = gdf[
 
 
 # ============================================================
-# CHECK RISK DATA
+# CREATE PERMANENT ROW ID
 # ============================================================
 
-print("Risk counts:")
+df["row_id"] = range(len(df))
+
+
+# ============================================================
+# DISPLAY DATA INFORMATION IN TERMINAL
+# ============================================================
+
+print("---------------------------------------")
+print("USGS EARTHQUAKE DATA")
+print("---------------------------------------")
+
+print("Total earthquakes:", len(df))
+
+print("\nRisk counts:")
 print(df["risk"].value_counts())
+
+print("\nDate range:")
+print(df["time_dt"].min())
+print(df["time_dt"].max())
+
+print("---------------------------------------")
 
 
 # ============================================================
@@ -116,7 +143,7 @@ source = ColumnDataSource(df)
 
 
 # ============================================================
-# FILTER
+# BOKEH INDEX FILTER
 # ============================================================
 
 index_filter = IndexFilter(
@@ -149,7 +176,7 @@ p = figure(
 
 
 # ============================================================
-# MAP TILES
+# BASE MAP
 # ============================================================
 
 p.add_tile(
@@ -161,7 +188,7 @@ p.add_tile(
 
 
 # ============================================================
-# MAGNITUDE COLOUR
+# COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
@@ -230,7 +257,7 @@ p.add_tools(
 
 
 # ============================================================
-# TIME FILTER
+# TIME SLIDER
 # ============================================================
 
 date_slider = DateRangeSlider(
@@ -252,7 +279,7 @@ date_slider = DateRangeSlider(
 
 
 # ============================================================
-# RISK FILTER
+# RISK SELECT
 # ============================================================
 
 risk_filter = Select(
@@ -272,88 +299,109 @@ risk_filter = Select(
 
 
 # ============================================================
-# STATUS
+# STATUS DISPLAY
 # ============================================================
 
 status = Div(
-    text="Showing all earthquakes",
+    text=(
+        "<b>Risk:</b> All"
+        "<br>"
+        "<b>Earthquakes shown:</b> "
+        + str(len(df))
+    ),
+
     width=300
 )
 
 
 # ============================================================
-# FILTER FUNCTION
+# UPDATE FUNCTION
 # ============================================================
 
 def update(attr, old, new):
 
-    # Start with all rows
+    # --------------------------------------------------------
+    # GET SELECTED RISK
+    # --------------------------------------------------------
 
-    selected = df.copy()
+    selected_risk = risk_filter.value
 
 
     # --------------------------------------------------------
-    # RISK FILTER
+    # GET SELECTED DATES
     # --------------------------------------------------------
 
-    if risk_filter.value != "All":
-
-        selected = selected[
-            selected["risk"] == risk_filter.value
-        ]
-
-
-    # --------------------------------------------------------
-    # TIME FILTER
-    # --------------------------------------------------------
-
-    start = pd.to_datetime(
+    start_date = pd.Timestamp(
         date_slider.value[0]
     )
 
-    end = pd.to_datetime(
+    end_date = pd.Timestamp(
         date_slider.value[1]
     )
 
-    selected = selected[
-        (selected["time_dt"] >= start) &
-        (selected["time_dt"] <= end)
-    ]
+
+    # --------------------------------------------------------
+    # CREATE BOOLEAN FILTER
+    # --------------------------------------------------------
+
+    mask = (
+        (df["time_dt"] >= start_date)
+        &
+        (df["time_dt"] <= end_date)
+    )
 
 
     # --------------------------------------------------------
-    # GET ORIGINAL ROW NUMBERS
+    # APPLY RISK FILTER
     # --------------------------------------------------------
 
-    index_filter.indices = selected.index.tolist()
+    if selected_risk != "All":
+
+        mask = (
+            mask
+            &
+            (df["risk"] == selected_risk)
+        )
 
 
     # --------------------------------------------------------
-    # SHOW FILTER RESULT
+    # GET ROW IDS
+    # --------------------------------------------------------
+
+    selected_rows = df.loc[
+        mask,
+        "row_id"
+    ].tolist()
+
+
+    # --------------------------------------------------------
+    # UPDATE BOKEH FILTER
+    # --------------------------------------------------------
+
+    index_filter.indices = selected_rows
+
+
+    # --------------------------------------------------------
+    # UPDATE STATUS
     # --------------------------------------------------------
 
     status.text = (
         "<b>Risk:</b> "
-        + risk_filter.value
+        + selected_risk
         + "<br>"
         + "<b>Earthquakes shown:</b> "
-        + str(len(selected))
+        + str(len(selected_rows))
     )
 
 
 # ============================================================
-# CONNECT RISK FILTER
+# CALLBACKS
 # ============================================================
 
 risk_filter.on_change(
     "value",
     update
 )
-
-
-# ============================================================
-# CONNECT TIME FILTER
-# ============================================================
 
 date_slider.on_change(
     "value",
@@ -362,7 +410,7 @@ date_slider.on_change(
 
 
 # ============================================================
-# DASHBOARD LAYOUT
+# CONTROLS
 # ============================================================
 
 controls = column(
@@ -370,6 +418,11 @@ controls = column(
     date_slider,
     status
 )
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
 
 layout = row(
     controls,
