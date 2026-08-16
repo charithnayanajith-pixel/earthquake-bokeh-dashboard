@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[11]:
-
-
 import geopandas as gpd
 import pandas as pd
 
@@ -26,35 +20,64 @@ from bokeh.layouts import row
 # TASK 1: IMPORT GEOSPATIAL DATA
 # ============================================================
 
-url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
+url = (
+    "https://earthquake.usgs.gov/earthquakes/feed/v1.0/"
+    "summary/all_month.geojson"
+)
 
 gdf = gpd.read_file(url)
 
-gdf = gdf.to_crs(3857)
+
+# ============================================================
+# CONVERT TO WEB MERCATOR
+# ============================================================
+
+gdf = gdf.to_crs(epsg=3857)
 
 gdf["x"] = gdf.geometry.x
 gdf["y"] = gdf.geometry.y
 
+
+# ============================================================
+# TIME HANDLING
+# ============================================================
+
 gdf["time_dt"] = pd.to_datetime(
     gdf["time"],
-    unit="ms"
+    unit="ms",
+    errors="coerce"
 )
 
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
     "%Y-%m-%d %H:%M:%S"
 )
 
+
+# ============================================================
+# MAGNITUDE
+# ============================================================
+
 gdf["mag"] = gdf["mag"].fillna(0)
+
+
+# ============================================================
+# RISK CLASSIFICATION
+# ============================================================
 
 gdf["risk"] = pd.cut(
     gdf["mag"],
-    [-1, 2.5, 4.5, 10],
+    bins=[-1, 2.5, 4.5, 10],
     labels=[
         "Low Risk",
         "Medium Risk",
         "High Risk"
     ]
-)
+).astype(str)
+
+
+# ============================================================
+# PREPARE DATA
+# ============================================================
 
 df = gdf[
     [
@@ -66,27 +89,48 @@ df = gdf[
         "time_str",
         "risk"
     ]
-].dropna()
+].dropna(
+    subset=[
+        "x",
+        "y",
+        "time_dt",
+        "risk"
+    ]
+)
 
 
 # ============================================================
-# TASK 2: BOKEH + GEOPANDAS MAP
+# COLUMN DATA SOURCE
 # ============================================================
 
 source = ColumnDataSource(
-    ColumnDataSource.from_df(df)
+    data=ColumnDataSource.from_df(df)
 )
+
+
+# ============================================================
+# TASK 2: CREATE BOKEH MAP
+# ============================================================
 
 p = figure(
     title="USGS Earthquake Interactive Geo Dashboard",
+
     x_axis_type="mercator",
     y_axis_type="mercator",
+
     x_range=(-20000000, 20000000),
     y_range=(-10000000, 10000000),
+
     width=900,
     height=600,
+
     tools="pan,wheel_zoom,box_zoom,reset,save"
 )
+
+
+# ============================================================
+# ADD MAP TILES
+# ============================================================
 
 p.add_tile(
     WMTSTileSource(
@@ -97,52 +141,79 @@ p.add_tile(
 
 
 # ============================================================
-# TASK 3: HOVER TOOL
+# TASK 4: COLOUR MAPPING
+# ============================================================
+
+mapper = LinearColorMapper(
+    palette=YlOrRd[9],
+
+    low=df["mag"].min(),
+
+    high=df["mag"].max()
+)
+
+
+# ============================================================
+# EARTHQUAKE POINTS
 # ============================================================
 
 points = p.scatter(
     x="x",
     y="y",
+
     size=8,
+
     marker="circle",
-    source=source
-)
 
-p.add_tools(
-    HoverTool(
-        renderers=[points],
-        tooltips=[
-            ("Location", "@place"),
-            ("Magnitude", "@mag{0.0}"),
-            ("Time", "@time_str"),
-            ("Risk", "@risk")
-        ]
-    )
+    source=source,
+
+    fill_color={
+        "field": "mag",
+        "transform": mapper
+    },
+
+    fill_alpha=0.7,
+
+    line_color="black",
+
+    line_width=0.5
 )
 
 
 # ============================================================
-# TASK 4: CHOROPLETH-STYLE COLOUR INTENSITY
+# COLOR BAR
 # ============================================================
 
-mapper = LinearColorMapper(
-    palette=YlOrRd[9],
-    low=df["mag"].min(),
-    high=df["mag"].max()
-)
+color_bar = ColorBar(
+    color_mapper=mapper,
 
-points.glyph.fill_color = {
-    "field": "mag",
-    "transform": mapper
-}
+    title="Magnitude",
+
+    label_standoff=10
+)
 
 p.add_layout(
-    ColorBar(
-        color_mapper=mapper,
-        title="Magnitude"
-    ),
+    color_bar,
     "right"
 )
+
+
+# ============================================================
+# TASK 3: HOVER TOOL
+# ============================================================
+
+hover = HoverTool(
+    renderers=[points],
+
+    tooltips=[
+        ("Location", "@place"),
+        ("Magnitude", "@mag{0.0}"),
+        ("Time", "@time_str"),
+        ("Risk", "@risk")
+    ]
+)
+
+p.add_tools(hover)
 
 
 # ============================================================
@@ -151,14 +222,19 @@ p.add_layout(
 
 date_slider = DateRangeSlider(
     title="Time Filter",
+
     start=df["time_dt"].min(),
+
     end=df["time_dt"].max(),
+
     value=(
         df["time_dt"].min(),
         df["time_dt"].max()
     ),
-    step=86400000,
-    width=250
+
+    step=24 * 60 * 60 * 1000,
+
+    width=300
 )
 
 
@@ -168,19 +244,22 @@ date_slider = DateRangeSlider(
 
 risk_filter = Select(
     title="Risk Level",
+
     value="All",
+
     options=[
         "All",
         "High Risk",
         "Medium Risk",
         "Low Risk"
     ],
-    width=250
+
+    width=200
 )
 
 
 # ============================================================
-# TASK 3: FILTER CALLBACK
+# FILTER CALLBACK
 # ============================================================
 
 def update(attr, old, new):
@@ -198,8 +277,14 @@ def update(attr, old, new):
             filtered["risk"] == risk_filter.value
         ]
 
-    source.data = ColumnDataSource.from_df(filtered)
+    source.data = ColumnDataSource.from_df(
+        filtered
+    )
 
+
+# ============================================================
+# CONNECT FILTERS
+# ============================================================
 
 date_slider.on_change(
     "value_throttled",
@@ -225,10 +310,3 @@ layout = row(
 curdoc().add_root(layout)
 
 curdoc().title = "USGS Earthquake Dashboard"
-
-
-# In[ ]:
-
-
-
-
