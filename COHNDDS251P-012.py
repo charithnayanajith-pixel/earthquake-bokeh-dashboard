@@ -48,7 +48,7 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 gdf["risk"] = pd.cut(
     gdf["mag"],
-    [-1, 3, 5, 10],
+    [-1, 2.5, 4.5, 10],
     labels=[
         "Low Risk",
         "Medium Risk",
@@ -73,7 +73,9 @@ df = gdf[
 # TASK 2: BOKEH + GEOPANDAS MAP
 # ============================================================
 
-source = ColumnDataSource(df)
+source = ColumnDataSource(
+    ColumnDataSource.from_df(df)
+)
 
 p = figure(
     title="USGS Earthquake Interactive Geo Dashboard",
@@ -83,7 +85,7 @@ p = figure(
     y_range=(-10000000, 10000000),
     width=900,
     height=600,
-    tools="pan,wheel_zoom,reset,save"
+    tools="pan,wheel_zoom,box_zoom,reset,save"
 )
 
 p.add_tile(
