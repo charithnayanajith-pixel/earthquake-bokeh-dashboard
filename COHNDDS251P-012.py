@@ -10,10 +10,13 @@ from bokeh.models import (
     Select,
     LinearColorMapper,
     ColorBar,
-    WMTSTileSource
+    WMTSTileSource,
+    IndexFilter,
+    CDSView,
+    Div
 )
 from bokeh.palettes import YlOrRd
-from bokeh.layouts import row
+from bokeh.layouts import row, column
 
 
 # ============================================================
@@ -29,7 +32,7 @@ gdf = gpd.read_file(url)
 # CONVERT TO WEB MERCATOR
 # ============================================================
 
-gdf = gdf.to_crs(epsg=3857)
+gdf = gdf.to_crs(3857)
 
 gdf["x"] = gdf.geometry.x
 gdf["y"] = gdf.geometry.y
@@ -44,9 +47,6 @@ gdf["time_dt"] = pd.to_datetime(
     unit="ms",
     errors="coerce"
 )
-
-# Remove timezone
-gdf["time_dt"] = gdf["time_dt"].dt.tz_localize(None)
 
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
     "%Y-%m-%d %H:%M:%S"
@@ -97,18 +97,39 @@ df = gdf[
         "y",
         "time_dt"
     ]
-)
+).reset_index(drop=True)
 
 
 # ============================================================
-# TASK 2: BOKEH DATA SOURCE
+# CHECK RISK DATA
+# ============================================================
+
+print("Risk counts:")
+print(df["risk"].value_counts())
+
+
+# ============================================================
+# BOKEH DATA SOURCE
 # ============================================================
 
 source = ColumnDataSource(df)
 
 
 # ============================================================
-# CREATE MAP
+# FILTER
+# ============================================================
+
+index_filter = IndexFilter(
+    indices=list(range(len(df)))
+)
+
+view = CDSView(
+    filter=index_filter
+)
+
+
+# ============================================================
+# MAP
 # ============================================================
 
 p = figure(
@@ -128,7 +149,7 @@ p = figure(
 
 
 # ============================================================
-# MAP TILE
+# MAP TILES
 # ============================================================
 
 p.add_tile(
@@ -140,7 +161,7 @@ p.add_tile(
 
 
 # ============================================================
-# TASK 4: MAGNITUDE COLOUR
+# MAGNITUDE COLOUR
 # ============================================================
 
 mapper = LinearColorMapper(
@@ -159,6 +180,8 @@ points = p.scatter(
     y="y",
 
     source=source,
+
+    view=view,
 
     size=8,
 
@@ -189,7 +212,7 @@ p.add_layout(
 
 
 # ============================================================
-# TASK 3: HOVER TOOL
+# HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -207,7 +230,7 @@ p.add_tools(
 
 
 # ============================================================
-# TASK 3: TIME FILTER
+# TIME FILTER
 # ============================================================
 
 date_slider = DateRangeSlider(
@@ -229,7 +252,7 @@ date_slider = DateRangeSlider(
 
 
 # ============================================================
-# TASK 3: RISK FILTER
+# RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -249,13 +272,24 @@ risk_filter = Select(
 
 
 # ============================================================
-# TASK 3: FILTER CALLBACK
+# STATUS
+# ============================================================
+
+status = Div(
+    text="Showing all earthquakes",
+    width=300
+)
+
+
+# ============================================================
+# FILTER FUNCTION
 # ============================================================
 
 def update(attr, old, new):
 
-    # Start with all data
-    filtered = df.copy()
+    # Start with all rows
+
+    selected = df.copy()
 
 
     # --------------------------------------------------------
@@ -264,8 +298,8 @@ def update(attr, old, new):
 
     if risk_filter.value != "All":
 
-        filtered = filtered[
-            filtered["risk"] == risk_filter.value
+        selected = selected[
+            selected["risk"] == risk_filter.value
         ]
 
 
@@ -281,18 +315,29 @@ def update(attr, old, new):
         date_slider.value[1]
     )
 
-    filtered = filtered[
-        (filtered["time_dt"] >= start) &
-        (filtered["time_dt"] <= end)
+    selected = selected[
+        (selected["time_dt"] >= start) &
+        (selected["time_dt"] <= end)
     ]
 
 
     # --------------------------------------------------------
-    # UPDATE MAP
+    # GET ORIGINAL ROW NUMBERS
     # --------------------------------------------------------
 
-    source.data = ColumnDataSource.from_df(
-        filtered
+    index_filter.indices = selected.index.tolist()
+
+
+    # --------------------------------------------------------
+    # SHOW FILTER RESULT
+    # --------------------------------------------------------
+
+    status.text = (
+        "<b>Risk:</b> "
+        + risk_filter.value
+        + "<br>"
+        + "<b>Earthquakes shown:</b> "
+        + str(len(selected))
     )
 
 
@@ -311,18 +356,23 @@ risk_filter.on_change(
 # ============================================================
 
 date_slider.on_change(
-    "value_throttled",
+    "value",
     update
 )
 
 
 # ============================================================
-# TASK 5: DASHBOARD LAYOUT
+# DASHBOARD LAYOUT
 # ============================================================
 
-layout = row(
+controls = column(
     risk_filter,
     date_slider,
+    status
+)
+
+layout = row(
+    controls,
     p
 )
 
