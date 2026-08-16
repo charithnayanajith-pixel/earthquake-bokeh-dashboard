@@ -31,7 +31,7 @@ gdf = gpd.read_file(url)
 
 
 # ============================================================
-# 2. CONVERT TO WEB MERCATOR
+# 2. CONVERT GEOMETRY TO WEB MERCATOR
 # ============================================================
 
 gdf = gdf.to_crs(epsg=3857)
@@ -41,17 +41,18 @@ gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# 3. DATE AND TIME
+# 3. CONVERT EARTHQUAKE TIME
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
     gdf["time"],
     unit="ms",
-    errors="coerce"
+    errors="coerce",
+    utc=True
 )
 
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
-    "%Y-%m-%d %H:%M:%S"
+    "%Y-%m-%d %H:%M:%S UTC"
 )
 
 
@@ -108,32 +109,60 @@ df = gdf[
 
 
 # ============================================================
-# 7. NUMERIC TIME FOR JAVASCRIPT
+# 7. CONVERT TIME TO INTEGER MILLISECONDS
+#
+# This is the ONLY time representation used by the filters.
 # ============================================================
 
 df["time_ms"] = (
-    df["time_dt"].astype("int64") // 10**6
+    df["time_dt"].astype("int64") // 1_000_000
+).astype("int64")
+
+
+# ============================================================
+# 8. MINIMUM / MAXIMUM TIME
+# ============================================================
+
+min_time = int(df["time_ms"].min())
+max_time = int(df["time_ms"].max())
+
+
+# ============================================================
+# 9. COMPLETE DATA SOURCE
+# ============================================================
+
+full_source = ColumnDataSource(
+    data={
+        "x": df["x"].tolist(),
+        "y": df["y"].tolist(),
+        "place": df["place"].tolist(),
+        "mag": df["mag"].tolist(),
+        "time_str": df["time_str"].tolist(),
+        "risk": df["risk"].tolist(),
+        "time_ms": df["time_ms"].tolist()
+    }
 )
 
 
 # ============================================================
-# 8. FULL DATA SOURCE
-# ============================================================
-
-full_source = ColumnDataSource(df)
-
-
-# ============================================================
-# 9. DISPLAY DATA SOURCE
+# 10. DISPLAY DATA SOURCE
 # ============================================================
 
 source = ColumnDataSource(
-    df.copy()
+    data={
+        "x": df["x"].tolist(),
+        "y": df["y"].tolist(),
+        "place": df["place"].tolist(),
+        "mag": df["mag"].tolist(),
+        "time_str": df["time_str"].tolist(),
+        "risk": df["risk"].tolist(),
+        "time_ms": df["time_ms"].tolist()
+    }
 )
 
 
 # ============================================================
-# 10. CREATE MAP
+# 11. CREATE MAP
 # ============================================================
 
 p = figure(
@@ -159,7 +188,7 @@ p = figure(
 
 
 # ============================================================
-# 11. BASE MAP
+# 12. BASE MAP
 # ============================================================
 
 p.add_tile(
@@ -176,24 +205,18 @@ p.add_tile(
 
 
 # ============================================================
-# 12. COLOUR MAPPER
+# 13. MAGNITUDE COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
-
-    low=float(
-        df["mag"].min()
-    ),
-
-    high=float(
-        df["mag"].max()
-    )
+    low=float(df["mag"].min()),
+    high=float(df["mag"].max())
 )
 
 
 # ============================================================
-# 13. EARTHQUAKE POINTS
+# 14. EARTHQUAKE POINTS
 # ============================================================
 
 points = p.scatter(
@@ -218,7 +241,7 @@ points = p.scatter(
 
 
 # ============================================================
-# 14. COLOUR BAR
+# 15. COLOUR BAR
 # ============================================================
 
 p.add_layout(
@@ -231,7 +254,7 @@ p.add_layout(
 
 
 # ============================================================
-# 15. HOVER TOOL
+# 16. HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -249,41 +272,32 @@ p.add_tools(
 
 
 # ============================================================
-# 16. DATE RANGE SLIDER
+# 17. DATE RANGE SLIDER
+#
+# Bokeh DateRangeSlider uses milliseconds internally.
+# Therefore we deliberately give it integer milliseconds.
 # ============================================================
-
-min_date = (
-    df["time_dt"]
-    .min()
-    .to_pydatetime()
-)
-
-max_date = (
-    df["time_dt"]
-    .max()
-    .to_pydatetime()
-)
 
 date_slider = DateRangeSlider(
     title="Time Filter",
 
-    start=min_date,
+    start=min_time,
 
-    end=max_date,
+    end=max_time,
 
     value=(
-        min_date,
-        max_date
+        min_time,
+        max_time
     ),
 
     step=24 * 60 * 60 * 1000,
 
-    width=350
+    width=400
 )
 
 
 # ============================================================
-# 17. RISK FILTER
+# 18. RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -303,7 +317,7 @@ risk_filter = Select(
 
 
 # ============================================================
-# 18. STATUS DISPLAY
+# 19. STATUS
 # ============================================================
 
 status = Div(
@@ -319,7 +333,7 @@ status = Div(
 
 
 # ============================================================
-# 19. JAVASCRIPT FILTER
+# 20. JAVASCRIPT FILTER
 # ============================================================
 
 callback = CustomJS(
@@ -327,7 +341,7 @@ callback = CustomJS(
         full_source=full_source,
         source=source,
         slider=date_slider,
-        risk_select=risk_filter,
+        risk_filter=risk_filter,
         status=status
     ),
 
@@ -341,32 +355,25 @@ callback = CustomJS(
 
 
     // ========================================================
-    // GET SELECTED DATE RANGE
+    // GET SLIDER VALUES
+    //
+    // DateRangeSlider returns milliseconds.
     // ========================================================
 
-    const start = slider.value[0];
+    const start = Number(slider.value[0]);
 
-    const end = slider.value[1];
-
-
-    // ========================================================
-    // CONVERT SELECTED DATES TO MILLISECONDS
-    // ========================================================
-
-    const start_ms = new Date(start).getTime();
-
-    const end_ms = new Date(end).getTime();
+    const end = Number(slider.value[1]);
 
 
     // ========================================================
-    // GET SELECTED RISK
+    // GET RISK
     // ========================================================
 
-    const selectedRisk = risk_select.value;
+    const selectedRisk = risk_filter.value;
 
 
     // ========================================================
-    // CREATE EMPTY RESULT
+    // EMPTY RESULT
     // ========================================================
 
     const result = {
@@ -374,7 +381,6 @@ callback = CustomJS(
         y: [],
         place: [],
         mag: [],
-        time_dt: [],
         time_str: [],
         risk: [],
         time_ms: []
@@ -382,7 +388,7 @@ callback = CustomJS(
 
 
     // ========================================================
-    // FILTER EARTHQUAKES
+    // FILTER DATA
     // ========================================================
 
     for (let i = 0; i < full.x.length; i++) {
@@ -391,27 +397,27 @@ callback = CustomJS(
             Number(full.time_ms[i]);
 
         const earthquakeRisk =
-            full.risk[i];
+            String(full.risk[i]);
 
 
         // ----------------------------------------------------
-        // TIME CONDITION
+        // TIME FILTER
         // ----------------------------------------------------
 
-        const timeOK =
-            earthquakeTime >= start_ms &&
-            earthquakeTime <= end_ms;
+        const timeMatches =
+            earthquakeTime >= start &&
+            earthquakeTime <= end;
 
 
         // ----------------------------------------------------
-        // RISK CONDITION
+        // RISK FILTER
         // ----------------------------------------------------
 
-        let riskOK = true;
+        let riskMatches = true;
 
         if (selectedRisk !== "All") {
 
-            riskOK =
+            riskMatches =
                 earthquakeRisk === selectedRisk;
         }
 
@@ -420,27 +426,15 @@ callback = CustomJS(
         // BOTH FILTERS
         // ----------------------------------------------------
 
-        if (timeOK && riskOK) {
+        if (timeMatches && riskMatches) {
 
-            result.x.push(
-                full.x[i]
-            );
+            result.x.push(full.x[i]);
 
-            result.y.push(
-                full.y[i]
-            );
+            result.y.push(full.y[i]);
 
-            result.place.push(
-                full.place[i]
-            );
+            result.place.push(full.place[i]);
 
-            result.mag.push(
-                full.mag[i]
-            );
-
-            result.time_dt.push(
-                full.time_dt[i]
-            );
+            result.mag.push(full.mag[i]);
 
             result.time_str.push(
                 full.time_str[i]
@@ -479,7 +473,7 @@ callback = CustomJS(
 
 
 # ============================================================
-# 20. RISK FILTER CALLBACK
+# 21. RISK CALLBACK
 # ============================================================
 
 risk_filter.js_on_change(
@@ -489,7 +483,7 @@ risk_filter.js_on_change(
 
 
 # ============================================================
-# 21. TIME SLIDER CALLBACK
+# 22. TIME SLIDER CALLBACK
 # ============================================================
 
 date_slider.js_on_change(
@@ -499,7 +493,7 @@ date_slider.js_on_change(
 
 
 # ============================================================
-# 22. CONTROLS
+# 23. CONTROLS
 # ============================================================
 
 controls = column(
@@ -510,7 +504,7 @@ controls = column(
 
 
 # ============================================================
-# 23. FINAL LAYOUT
+# 24. FINAL LAYOUT
 # ============================================================
 
 layout = row(
@@ -520,11 +514,9 @@ layout = row(
 
 
 # ============================================================
-# 24. BOKEH SERVER
+# 25. START BOKEH
 # ============================================================
 
 curdoc().add_root(layout)
 
-curdoc().title = (
-    "USGS Earthquake Dashboard"
-)
+curdoc().title = "USGS Earthquake Dashboard"
