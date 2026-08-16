@@ -11,8 +11,6 @@ from bokeh.models import (
     LinearColorMapper,
     ColorBar,
     WMTSTileSource,
-    IndexFilter,
-    CDSView,
     Div
 )
 from bokeh.palettes import YlOrRd
@@ -32,7 +30,7 @@ gdf = gpd.read_file(url)
 
 
 # ============================================================
-# 2. CONVERT COORDINATES TO WEB MERCATOR
+# 2. CONVERT TO WEB MERCATOR
 # ============================================================
 
 gdf = gdf.to_crs(epsg=3857)
@@ -69,7 +67,7 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 
 # ============================================================
-# 5. RISK LEVEL
+# 5. RISK CLASSIFICATION
 # ============================================================
 
 gdf["risk"] = "Low Risk"
@@ -109,7 +107,7 @@ df = gdf[
 
 
 # ============================================================
-# 7. CREATE MILLISECOND TIME COLUMN
+# 7. CREATE NUMERIC TIME COLUMN
 # ============================================================
 
 df["time_ms"] = (
@@ -118,39 +116,14 @@ df["time_ms"] = (
 
 
 # ============================================================
-# 8. CREATE ROW INDEX
-# ============================================================
-
-df["row_index"] = range(len(df))
-
-
-# ============================================================
-# 9. INITIAL DATA SOURCE
+# 8. BOKEH DATA SOURCE
 # ============================================================
 
 source = ColumnDataSource(df)
 
 
 # ============================================================
-# 10. CREATE INDEX FILTER
-# ============================================================
-
-index_filter = IndexFilter(
-    indices=list(range(len(df)))
-)
-
-
-# ============================================================
-# 11. CREATE CDS VIEW
-# ============================================================
-
-view = CDSView(
-    filter=index_filter
-)
-
-
-# ============================================================
-# 12. CREATE MAP
+# 9. CREATE MAP
 # ============================================================
 
 p = figure(
@@ -170,7 +143,7 @@ p = figure(
 
 
 # ============================================================
-# 13. ADD BASE MAP
+# 10. BASE MAP
 # ============================================================
 
 p.add_tile(
@@ -187,18 +160,20 @@ p.add_tile(
 
 
 # ============================================================
-# 14. COLOUR MAPPER
+# 11. COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
+
     low=float(df["mag"].min()),
+
     high=float(df["mag"].max())
 )
 
 
 # ============================================================
-# 15. EARTHQUAKE POINTS
+# 12. EARTHQUAKE POINTS
 # ============================================================
 
 points = p.scatter(
@@ -206,8 +181,6 @@ points = p.scatter(
     y="y",
 
     source=source,
-
-    view=view,
 
     size=8,
 
@@ -225,7 +198,7 @@ points = p.scatter(
 
 
 # ============================================================
-# 16. COLOUR BAR
+# 13. COLOUR BAR
 # ============================================================
 
 p.add_layout(
@@ -238,7 +211,7 @@ p.add_layout(
 
 
 # ============================================================
-# 17. HOVER TOOL
+# 14. HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -256,22 +229,24 @@ p.add_tools(
 
 
 # ============================================================
-# 18. TIME SLIDER
+# 15. DATE RANGE SLIDER
 # ============================================================
 
-minimum_time = int(df["time_ms"].min())
-maximum_time = int(df["time_ms"].max())
+min_date = df["time_dt"].min().to_pydatetime()
+
+max_date = df["time_dt"].max().to_pydatetime()
+
 
 date_slider = DateRangeSlider(
     title="Time Filter",
 
-    start=minimum_time,
+    start=min_date,
 
-    end=maximum_time,
+    end=max_date,
 
     value=(
-        minimum_time,
-        maximum_time
+        min_date,
+        max_date
     ),
 
     step=24 * 60 * 60 * 1000,
@@ -281,7 +256,7 @@ date_slider = DateRangeSlider(
 
 
 # ============================================================
-# 19. RISK FILTER
+# 16. RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -301,7 +276,7 @@ risk_filter = Select(
 
 
 # ============================================================
-# 20. STATUS
+# 17. STATUS DISPLAY
 # ============================================================
 
 status = Div(
@@ -317,17 +292,22 @@ status = Div(
 
 
 # ============================================================
-# 21. FILTER FUNCTION
+# 18. UPDATE FUNCTION
 # ============================================================
 
 def update(attr, old, new):
 
     # --------------------------------------------------------
-    # GET TIME RANGE
+    # GET DATE RANGE FROM SLIDER
     # --------------------------------------------------------
 
-    start_time = int(date_slider.value[0])
-    end_time = int(date_slider.value[1])
+    start_date = pd.to_datetime(
+        date_slider.value[0]
+    )
+
+    end_date = pd.to_datetime(
+        date_slider.value[1]
+    )
 
 
     # --------------------------------------------------------
@@ -338,18 +318,18 @@ def update(attr, old, new):
 
 
     # --------------------------------------------------------
-    # TIME CONDITION
+    # TIME FILTER
     # --------------------------------------------------------
 
     time_condition = (
-        (df["time_ms"] >= start_time)
+        (df["time_dt"] >= start_date)
         &
-        (df["time_ms"] <= end_time)
+        (df["time_dt"] <= end_date)
     )
 
 
     # --------------------------------------------------------
-    # RISK CONDITION
+    # RISK FILTER
     # --------------------------------------------------------
 
     if selected_risk == "All":
@@ -367,30 +347,22 @@ def update(attr, old, new):
 
 
     # --------------------------------------------------------
-    # COMBINE CONDITIONS
+    # COMBINE FILTERS
     # --------------------------------------------------------
 
-    final_condition = (
-        time_condition
-        &
-        risk_condition
+    filtered = df[
+        time_condition & risk_condition
+    ]
+
+
+    # --------------------------------------------------------
+    # UPDATE DATA SOURCE
+    # --------------------------------------------------------
+
+    source.data = (
+        ColumnDataSource
+        .from_df(filtered)
     )
-
-
-    # --------------------------------------------------------
-    # FIND ROW INDICES
-    # --------------------------------------------------------
-
-    selected_indices = df.index[
-        final_condition
-    ].tolist()
-
-
-    # --------------------------------------------------------
-    # UPDATE BOKEH VIEW
-    # --------------------------------------------------------
-
-    index_filter.indices = selected_indices
 
 
     # --------------------------------------------------------
@@ -402,12 +374,12 @@ def update(attr, old, new):
         + selected_risk
         + "<br>"
         + "<b>Earthquakes shown:</b> "
-        + str(len(selected_indices))
+        + str(len(filtered))
     )
 
 
 # ============================================================
-# 22. CONNECT RISK FILTER
+# 19. CONNECT RISK FILTER
 # ============================================================
 
 risk_filter.on_change(
@@ -417,7 +389,7 @@ risk_filter.on_change(
 
 
 # ============================================================
-# 23. CONNECT TIME SLIDER
+# 20. CONNECT TIME SLIDER
 # ============================================================
 
 date_slider.on_change(
@@ -427,7 +399,7 @@ date_slider.on_change(
 
 
 # ============================================================
-# 24. CONTROLS
+# 21. CONTROLS
 # ============================================================
 
 controls = column(
@@ -438,7 +410,7 @@ controls = column(
 
 
 # ============================================================
-# 25. FINAL LAYOUT
+# 22. FINAL DASHBOARD
 # ============================================================
 
 layout = row(
@@ -448,7 +420,7 @@ layout = row(
 
 
 # ============================================================
-# 26. START BOKEH APPLICATION
+# 23. BOKEH SERVER
 # ============================================================
 
 curdoc().add_root(layout)
