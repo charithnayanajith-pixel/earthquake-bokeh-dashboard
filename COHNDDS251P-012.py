@@ -11,6 +11,7 @@ from bokeh.models import (
     LinearColorMapper,
     ColorBar,
     WMTSTileSource,
+    CustomJS,
     Div
 )
 from bokeh.palettes import YlOrRd
@@ -18,10 +19,13 @@ from bokeh.layouts import row, column
 
 
 # ============================================================
-# 1. LOAD USGS DATA
+# 1. LOAD USGS EARTHQUAKE DATA
 # ============================================================
 
-url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
+url = (
+    "https://earthquake.usgs.gov/earthquakes/"
+    "feed/v1.0/summary/all_month.geojson"
+)
 
 gdf = gpd.read_file(url)
 
@@ -37,7 +41,7 @@ gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# 3. DATE AND TIME
+# 3. DATE / TIME
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
@@ -64,7 +68,7 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 
 # ============================================================
-# 5. RISK LEVEL
+# 5. RISK CLASSIFICATION
 # ============================================================
 
 gdf["risk"] = "Low Risk"
@@ -100,20 +104,32 @@ df = gdf[
         "y",
         "time_dt"
     ]
-).copy()
-
-df = df.reset_index(drop=True)
+).reset_index(drop=True)
 
 
 # ============================================================
-# 7. INITIAL DATA SOURCE
+# 7. NUMERIC TIME
 # ============================================================
 
-source = ColumnDataSource(df)
+df["time_ms"] = (
+    df["time_dt"].astype("int64") // 10**6
+)
 
 
 # ============================================================
-# 8. CREATE MAP
+# 8. CREATE TWO DATA SOURCES
+#
+# full_source = original complete data
+# source      = data currently displayed
+# ============================================================
+
+full_source = ColumnDataSource(df)
+
+source = ColumnDataSource(df.copy())
+
+
+# ============================================================
+# 9. CREATE MAP
 # ============================================================
 
 p = figure(
@@ -133,30 +149,37 @@ p = figure(
 
 
 # ============================================================
-# 9. BASE MAP
+# 10. BASE MAP
 # ============================================================
 
 p.add_tile(
     WMTSTileSource(
-        url="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-        attribution="© OpenStreetMap contributors © CARTO"
+        url=(
+            "https://a.basemaps.cartocdn.com/"
+            "light_all/{z}/{x}/{y}.png"
+        ),
+        attribution=(
+            "© OpenStreetMap contributors © CARTO"
+        )
     )
 )
 
 
 # ============================================================
-# 10. COLOUR MAPPER
+# 11. COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
+
     low=float(df["mag"].min()),
+
     high=float(df["mag"].max())
 )
 
 
 # ============================================================
-# 11. EARTHQUAKE POINTS
+# 12. EARTHQUAKE POINTS
 # ============================================================
 
 points = p.scatter(
@@ -181,7 +204,7 @@ points = p.scatter(
 
 
 # ============================================================
-# 12. COLOUR BAR
+# 13. COLOUR BAR
 # ============================================================
 
 p.add_layout(
@@ -194,7 +217,7 @@ p.add_layout(
 
 
 # ============================================================
-# 13. HOVER TOOL
+# 14. HOVER TOOL
 # ============================================================
 
 p.add_tools(
@@ -212,20 +235,26 @@ p.add_tools(
 
 
 # ============================================================
-# 14. DATE SLIDER
+# 15. FIND MINIMUM AND MAXIMUM DATE
 # ============================================================
 
-min_date = df["time_dt"].min().to_pydatetime()
-max_date = df["time_dt"].max().to_pydatetime()
+min_time = int(df["time_ms"].min())
+
+max_time = int(df["time_ms"].max())
+
+
+# ============================================================
+# 16. DATE RANGE SLIDER
+# ============================================================
 
 date_slider = DateRangeSlider(
     title="Time Filter",
 
-    start=min_date,
+    start=min_time,
 
-    end=max_date,
+    end=max_time,
 
-    value=(min_date, max_date),
+    value=(min_time, max_time),
 
     step=24 * 60 * 60 * 1000,
 
@@ -234,7 +263,7 @@ date_slider = DateRangeSlider(
 
 
 # ============================================================
-# 15. RISK SELECT
+# 17. RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -254,7 +283,7 @@ risk_filter = Select(
 
 
 # ============================================================
-# 16. STATUS
+# 18. STATUS DISPLAY
 # ============================================================
 
 status = Div(
@@ -270,116 +299,148 @@ status = Div(
 
 
 # ============================================================
-# 17. UPDATE FUNCTION
+# 19. JAVASCRIPT FILTER
 # ============================================================
 
-def update():
+callback = CustomJS(
+    args=dict(
+        full_source=full_source,
+        source=source,
+        slider=date_slider,
+        risk_select=risk_filter,
+        status=status
+    ),
 
-    # --------------------------------------------------------
-    # SELECTED DATES
-    # --------------------------------------------------------
+    code="""
 
-    start_date = pd.Timestamp(
-        date_slider.value[0]
-    )
+    // --------------------------------------------------------
+    // GET ORIGINAL DATA
+    // --------------------------------------------------------
 
-    end_date = pd.Timestamp(
-        date_slider.value[1]
-    )
+    const full = full_source.data;
 
+    const start = slider.value[0];
 
-    # --------------------------------------------------------
-    # SELECTED RISK
-    # --------------------------------------------------------
+    const end = slider.value[1];
 
-    selected_risk = risk_filter.value
-
-
-    # --------------------------------------------------------
-    # TIME FILTER
-    # --------------------------------------------------------
-
-    filtered = df[
-        (df["time_dt"] >= start_date)
-        &
-        (df["time_dt"] <= end_date)
-    ]
+    const selectedRisk = risk_select.value;
 
 
-    # --------------------------------------------------------
-    # RISK FILTER
-    # --------------------------------------------------------
+    // --------------------------------------------------------
+    // CREATE EMPTY RESULT
+    // --------------------------------------------------------
 
-    if selected_risk != "All":
+    const result = {
+        x: [],
+        y: [],
+        place: [],
+        mag: [],
+        time_dt: [],
+        time_str: [],
+        risk: [],
+        time_ms: []
+    };
 
-        filtered = filtered[
-            filtered["risk"] == selected_risk
-        ]
+
+    // --------------------------------------------------------
+    // LOOP THROUGH ALL EARTHQUAKES
+    // --------------------------------------------------------
+
+    for (let i = 0; i < full.x.length; i++) {
+
+        const earthquakeTime = full.time_ms[i];
+
+        const earthquakeRisk = full.risk[i];
 
 
-    # --------------------------------------------------------
-    # UPDATE SOURCE
-    # --------------------------------------------------------
+        // ----------------------------------------------------
+        // TIME CONDITION
+        // ----------------------------------------------------
 
-    source.data = {
-        "x": filtered["x"].tolist(),
-        "y": filtered["y"].tolist(),
-        "place": filtered["place"].tolist(),
-        "mag": filtered["mag"].tolist(),
-        "time_dt": filtered["time_dt"].tolist(),
-        "time_str": filtered["time_str"].tolist(),
-        "risk": filtered["risk"].tolist()
+        const timeOK =
+            earthquakeTime >= start &&
+            earthquakeTime <= end;
+
+
+        // ----------------------------------------------------
+        // RISK CONDITION
+        // ----------------------------------------------------
+
+        let riskOK = true;
+
+        if (selectedRisk !== "All") {
+            riskOK = earthquakeRisk === selectedRisk;
+        }
+
+
+        // ----------------------------------------------------
+        // BOTH CONDITIONS
+        // ----------------------------------------------------
+
+        if (timeOK && riskOK) {
+
+            result.x.push(full.x[i]);
+
+            result.y.push(full.y[i]);
+
+            result.place.push(full.place[i]);
+
+            result.mag.push(full.mag[i]);
+
+            result.time_dt.push(full.time_dt[i]);
+
+            result.time_str.push(full.time_str[i]);
+
+            result.risk.push(full.risk[i]);
+
+            result.time_ms.push(full.time_ms[i]);
+        }
     }
 
 
-    # --------------------------------------------------------
-    # UPDATE STATUS
-    # --------------------------------------------------------
+    // --------------------------------------------------------
+    // UPDATE MAP
+    // --------------------------------------------------------
 
-    status.text = (
-        "<b>Risk:</b> "
-        + selected_risk
-        + "<br>"
-        + "<b>Earthquakes shown:</b> "
-        + str(len(filtered))
-    )
+    source.data = result;
 
 
-# ============================================================
-# 18. RISK CALLBACK
-# ============================================================
+    // --------------------------------------------------------
+    // UPDATE STATUS
+    // --------------------------------------------------------
 
-def risk_changed(attr, old, new):
-
-    update()
-
-
-# ============================================================
-# 19. SLIDER CALLBACK
-# ============================================================
-
-def slider_changed(attr, old, new):
-
-    update()
-
-
-# ============================================================
-# 20. CONNECT CALLBACKS
-# ============================================================
-
-risk_filter.on_change(
-    "value",
-    risk_changed
-)
-
-date_slider.on_change(
-    "value",
-    slider_changed
+    status.text =
+        "<b>Risk:</b> " +
+        selectedRisk +
+        "<br>" +
+        "<b>Earthquakes shown:</b> " +
+        result.x.length;
+    """
 )
 
 
 # ============================================================
-# 21. CONTROLS
+# 20. CONNECT CALLBACK TO RISK FILTER
+# ============================================================
+
+risk_filter.js_on_change(
+    "value",
+    callback
+)
+
+
+# ============================================================
+# 21. CONNECT CALLBACK TO TIME SLIDER
+# ============================================================
+
+date_slider.js_on_change(
+    "value",
+    callback
+)
+
+
+# ============================================================
+# 22. CONTROLS
 # ============================================================
 
 controls = column(
@@ -390,7 +451,7 @@ controls = column(
 
 
 # ============================================================
-# 22. LAYOUT
+# 23. FINAL DASHBOARD
 # ============================================================
 
 layout = row(
@@ -400,7 +461,7 @@ layout = row(
 
 
 # ============================================================
-# 23. START BOKEH
+# 24. BOKEH SERVER
 # ============================================================
 
 curdoc().add_root(layout)
