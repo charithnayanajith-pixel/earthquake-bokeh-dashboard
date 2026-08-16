@@ -17,32 +17,26 @@ from bokeh.layouts import row
 
 
 # ============================================================
-# TASK 1: IMPORT GEOSPATIAL DATA
+# TASK 1 - IMPORT DATA
 # ============================================================
 
 url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
 
 gdf = gpd.read_file(url)
 
-
-# ============================================================
-# CONVERT COORDINATES
-# ============================================================
-
-gdf = gdf.to_crs(epsg=3857)
+gdf = gdf.to_crs(3857)
 
 gdf["x"] = gdf.geometry.x
 gdf["y"] = gdf.geometry.y
 
 
 # ============================================================
-# DATE AND TIME
+# DATE
 # ============================================================
 
 gdf["time_dt"] = pd.to_datetime(
     gdf["time"],
-    unit="ms",
-    errors="coerce"
+    unit="ms"
 )
 
 gdf["time_str"] = gdf["time_dt"].dt.strftime(
@@ -58,22 +52,24 @@ gdf["mag"] = gdf["mag"].fillna(0)
 
 
 # ============================================================
-# RISK LEVEL
+# RISK
 # ============================================================
 
-gdf["risk"] = pd.cut(
-    gdf["mag"],
-    bins=[-1, 2.5, 4.5, 10],
-    labels=[
-        "Low Risk",
-        "Medium Risk",
-        "High Risk"
-    ]
-).astype(str)
+gdf["risk"] = "Low Risk"
+
+gdf.loc[
+    gdf["mag"] >= 2.5,
+    "risk"
+] = "Medium Risk"
+
+gdf.loc[
+    gdf["mag"] >= 4.5,
+    "risk"
+] = "High Risk"
 
 
 # ============================================================
-# SELECT REQUIRED COLUMNS
+# DATAFRAME
 # ============================================================
 
 df = gdf[
@@ -87,17 +83,12 @@ df = gdf[
         "risk"
     ]
 ].dropna(
-    subset=[
-        "x",
-        "y",
-        "time_dt",
-        "risk"
-    ]
+    subset=["x", "y", "time_dt"]
 )
 
 
 # ============================================================
-# TASK 2: BOKEH DATA SOURCE
+# BOKEH SOURCE
 # ============================================================
 
 source = ColumnDataSource(df)
@@ -124,7 +115,7 @@ p = figure(
 
 
 # ============================================================
-# MAP TILE
+# MAP TILES
 # ============================================================
 
 p.add_tile(
@@ -136,7 +127,7 @@ p.add_tile(
 
 
 # ============================================================
-# TASK 4: MAGNITUDE COLOUR
+# COLOUR MAPPER
 # ============================================================
 
 mapper = LinearColorMapper(
@@ -156,10 +147,12 @@ points = p.scatter(
     source=source,
     size=8,
     marker="circle",
+
     fill_color={
         "field": "mag",
         "transform": mapper
     },
+
     fill_alpha=0.8,
     line_color="black"
 )
@@ -179,12 +172,13 @@ p.add_layout(
 
 
 # ============================================================
-# TASK 3: HOVER TOOL
+# HOVER
 # ============================================================
 
 p.add_tools(
     HoverTool(
         renderers=[points],
+
         tooltips=[
             ("Location", "@place"),
             ("Magnitude", "@mag{0.0}"),
@@ -196,7 +190,7 @@ p.add_tools(
 
 
 # ============================================================
-# TASK 3: TIME FILTER
+# TIME FILTER
 # ============================================================
 
 date_slider = DateRangeSlider(
@@ -211,14 +205,14 @@ date_slider = DateRangeSlider(
         df["time_dt"].max()
     ),
 
-    step=24 * 60 * 60 * 1000,
+    step=86400000,
 
     width=300
 )
 
 
 # ============================================================
-# TASK 3: RISK FILTER
+# RISK FILTER
 # ============================================================
 
 risk_filter = Select(
@@ -238,16 +232,15 @@ risk_filter = Select(
 
 
 # ============================================================
-# TASK 3: FILTER FUNCTION
+# FILTER
 # ============================================================
 
-def update(attr, old, new):
+def update():
 
     filtered = df.copy()
 
-    # -------------------------
-    # Risk filtering
-    # -------------------------
+
+    # Risk filter
 
     if risk_filter.value == "High Risk":
 
@@ -268,9 +261,7 @@ def update(attr, old, new):
         ]
 
 
-    # -------------------------
-    # Time filtering
-    # -------------------------
+    # Time filter
 
     start = pd.to_datetime(
         date_slider.value[0]
@@ -286,38 +277,36 @@ def update(attr, old, new):
     ]
 
 
-    # -------------------------
-    # Update map
-    # -------------------------
+    # Update source
 
     source.data = {
-        "x": filtered["x"].tolist(),
-        "y": filtered["y"].tolist(),
-        "place": filtered["place"].tolist(),
-        "mag": filtered["mag"].tolist(),
-        "time_dt": filtered["time_dt"].tolist(),
-        "time_str": filtered["time_str"].tolist(),
-        "risk": filtered["risk"].tolist()
+        "x": filtered["x"],
+        "y": filtered["y"],
+        "place": filtered["place"],
+        "mag": filtered["mag"],
+        "time_dt": filtered["time_dt"],
+        "time_str": filtered["time_str"],
+        "risk": filtered["risk"]
     }
 
 
 # ============================================================
-# CONNECT FILTERS
+# CALLBACKS
 # ============================================================
 
 risk_filter.on_change(
     "value",
-    update
+    lambda attr, old, new: update()
 )
 
 date_slider.on_change(
-    "value_throttled",
-    update
+    "value",
+    lambda attr, old, new: update()
 )
 
 
 # ============================================================
-# TASK 5: DASHBOARD LAYOUT
+# LAYOUT
 # ============================================================
 
 layout = row(
