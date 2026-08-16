@@ -1,6 +1,8 @@
 import geopandas as gpd
 import pandas as pd
 
+from datetime import datetime, timedelta
+
 from bokeh.io import curdoc
 from bokeh.plotting import figure
 from bokeh.models import (
@@ -109,73 +111,103 @@ df = gdf[
 
 
 # ============================================================
-# TIME IN MILLISECONDS
+# CREATE DATE CODE
 # ============================================================
 
-df["time_ms"] = (
-    df["time_dt"].astype("int64") // 1_000_000
-).astype("int64")
+df["date_code"] = (
+    df["time_dt"]
+    .dt.strftime("%Y%m%d")
+    .astype(int)
+)
 
 
 # ============================================================
-# ACTUAL DATA RANGE
+# SLIDER RANGE
 #
-# This is the important correction.
-# The slider covers the dates that actually exist
-# in the USGS monthly dataset.
+# Use the actual current date and previous 30 days.
+# This matches the USGS all_month feed.
 # ============================================================
 
-min_date = (
-    df["time_dt"]
-    .dt.tz_convert(None)
-    .min()
-    .to_pydatetime()
-)
+today = datetime.utcnow().date()
 
-max_date = (
-    df["time_dt"]
-    .dt.tz_convert(None)
-    .max()
-    .to_pydatetime()
-)
+slider_start = today - timedelta(days=30)
+
+slider_end = today
 
 
 # ============================================================
-# COMPLETE DATA SOURCE
+# DATA SOURCE
 # ============================================================
 
 full_source = ColumnDataSource(
     data={
         "x": df["x"].tolist(),
         "y": df["y"].tolist(),
-        "place": df["place"].fillna("Unknown").tolist(),
-        "mag": df["mag"].astype(float).tolist(),
-        "time_str": df["time_str"].tolist(),
-        "time_ms": df["time_ms"].tolist(),
-        "risk": df["risk"].tolist()
+        "place": (
+            df["place"]
+            .fillna("Unknown")
+            .astype(str)
+            .tolist()
+        ),
+        "mag": (
+            df["mag"]
+            .astype(float)
+            .tolist()
+        ),
+        "time_str": (
+            df["time_str"]
+            .astype(str)
+            .tolist()
+        ),
+        "risk": (
+            df["risk"]
+            .astype(str)
+            .tolist()
+        ),
+        "date_code": (
+            df["date_code"]
+            .astype(int)
+            .tolist()
+        )
     }
 )
-
-
-# ============================================================
-# DISPLAY DATA SOURCE
-# ============================================================
 
 source = ColumnDataSource(
     data={
         "x": df["x"].tolist(),
         "y": df["y"].tolist(),
-        "place": df["place"].fillna("Unknown").tolist(),
-        "mag": df["mag"].astype(float).tolist(),
-        "time_str": df["time_str"].tolist(),
-        "time_ms": df["time_ms"].tolist(),
-        "risk": df["risk"].tolist()
+        "place": (
+            df["place"]
+            .fillna("Unknown")
+            .astype(str)
+            .tolist()
+        ),
+        "mag": (
+            df["mag"]
+            .astype(float)
+            .tolist()
+        ),
+        "time_str": (
+            df["time_str"]
+            .astype(str)
+            .tolist()
+        ),
+        "risk": (
+            df["risk"]
+            .astype(str)
+            .tolist()
+        ),
+        "date_code": (
+            df["date_code"]
+            .astype(int)
+            .tolist()
+        )
     }
 )
 
 
 # ============================================================
-# TASK 2: CREATE MAP
+# TASK 2: MAP
 # ============================================================
 
 p = figure(
@@ -190,13 +222,7 @@ p = figure(
     width=900,
     height=600,
 
-    tools=(
-        "pan,"
-        "wheel_zoom,"
-        "box_zoom,"
-        "reset,"
-        "save"
-    )
+    tools="pan,wheel_zoom,box_zoom,reset,save"
 )
 
 
@@ -218,7 +244,7 @@ p.add_tile(
 
 
 # ============================================================
-# TASK 4: MAGNITUDE COLOUR MAPPING
+# TASK 4: COLOUR MAPPING
 # ============================================================
 
 mapper = LinearColorMapper(
@@ -235,11 +261,9 @@ mapper = LinearColorMapper(
 points = p.scatter(
     x="x",
     y="y",
-
     source=source,
 
     size=8,
-
     marker="circle",
 
     fill_color={
@@ -249,9 +273,7 @@ points = p.scatter(
 
     fill_alpha=0.8,
 
-    line_color="black",
-
-    line_width=0.5
+    line_color="black"
 )
 
 
@@ -269,7 +291,7 @@ p.add_layout(
 
 
 # ============================================================
-# TASK 3: HOVER TOOL
+# TASK 3: HOVER
 # ============================================================
 
 p.add_tools(
@@ -293,13 +315,12 @@ p.add_tools(
 date_slider = DateRangeSlider(
     title="Time Filter",
 
-    start=min_date,
-
-    end=max_date,
+    start=slider_start,
+    end=slider_end,
 
     value=(
-        min_date,
-        max_date
+        slider_start,
+        slider_end
     ),
 
     step=1,
@@ -341,10 +362,10 @@ status = Div(
         "<b>Risk:</b> All"
         "<br>"
         "<b>Start Date:</b> "
-        + min_date.strftime("%d %b %Y")
+        + slider_start.strftime("%d %b %Y")
         + "<br>"
         "<b>End Date:</b> "
-        + max_date.strftime("%d %b %Y")
+        + slider_end.strftime("%d %b %Y")
         + "<br>"
         "<b>Earthquakes shown:</b> "
         + str(len(df))
@@ -369,77 +390,135 @@ callback = CustomJS(
 
     code="""
 
-    // Complete dataset
     const full = full_source.data;
 
 
-    // Selected date range
-    const start = Number(slider.value[0]);
-    const end = Number(slider.value[1]);
+    // --------------------------------------------------------
+    // GET SELECTED DATES
+    // --------------------------------------------------------
+
+    const startDate = new Date(
+        Number(slider.value[0])
+    );
+
+    const endDate = new Date(
+        Number(slider.value[1])
+    );
 
 
-    // Selected risk
-    const selectedRisk = risk_filter.value;
+    // --------------------------------------------------------
+    // CREATE DATE CODES
+    // --------------------------------------------------------
+
+    const startCode =
+        startDate.getUTCFullYear() * 10000
+        +
+        (startDate.getUTCMonth() + 1) * 100
+        +
+        startDate.getUTCDate();
 
 
-    // Empty filtered dataset
+    const endCode =
+        endDate.getUTCFullYear() * 10000
+        +
+        (endDate.getUTCMonth() + 1) * 100
+        +
+        endDate.getUTCDate();
+
+
+    // --------------------------------------------------------
+    // SELECTED RISK
+    // --------------------------------------------------------
+
+    const selectedRisk =
+        risk_filter.value;
+
+
+    // --------------------------------------------------------
+    // RESULT
+    // --------------------------------------------------------
+
     const result = {
         x: [],
         y: [],
         place: [],
         mag: [],
         time_str: [],
-        time_ms: [],
-        risk: []
+        risk: [],
+        date_code: []
     };
 
 
-    // Filter records
-    for (let i = 0; i < full.x.length; i++) {
+    // --------------------------------------------------------
+    // FILTER
+    // --------------------------------------------------------
 
-        const earthquakeTime =
-            Number(full.time_ms[i]);
+    for (
+        let i = 0;
+        i < full.x.length;
+        i++
+    ) {
+
+        const earthquakeDate =
+            Number(full.date_code[i]);
 
         const earthquakeRisk =
             String(full.risk[i]);
 
 
-        // Date condition
         const dateOK =
-            earthquakeTime >= start &&
-            earthquakeTime <= end;
+            earthquakeDate >= startCode &&
+            earthquakeDate <= endCode;
 
 
-        // Risk condition
         let riskOK = true;
 
+
         if (selectedRisk !== "All") {
+
             riskOK =
                 earthquakeRisk === selectedRisk;
         }
 
 
-        // Apply both filters
         if (dateOK && riskOK) {
 
             result.x.push(full.x[i]);
+
             result.y.push(full.y[i]);
+
             result.place.push(full.place[i]);
+
             result.mag.push(full.mag[i]);
-            result.time_str.push(full.time_str[i]);
-            result.time_ms.push(full.time_ms[i]);
-            result.risk.push(full.risk[i]);
+
+            result.time_str.push(
+                full.time_str[i]
+            );
+
+            result.risk.push(
+                full.risk[i]
+            );
+
+            result.date_code.push(
+                full.date_code[i]
+            );
         }
     }
 
 
-    // Update map
+    // --------------------------------------------------------
+    // UPDATE MAP
+    // --------------------------------------------------------
+
     source.data = result;
 
 
-    // Display selected dates
+    // --------------------------------------------------------
+    // FORMAT DATES
+    // --------------------------------------------------------
+
     const startText =
-        new Date(start).toLocaleDateString(
+        startDate.toLocaleDateString(
             "en-GB",
             {
                 day: "2-digit",
@@ -447,9 +526,10 @@ callback = CustomJS(
                 year: "numeric"
             }
         );
+
 
     const endText =
-        new Date(end).toLocaleDateString(
+        endDate.toLocaleDateString(
             "en-GB",
             {
                 day: "2-digit",
@@ -459,7 +539,10 @@ callback = CustomJS(
         );
 
 
-    // Update status
+    // --------------------------------------------------------
+    // UPDATE STATUS
+    // --------------------------------------------------------
+
     status.text =
         "<b>Risk:</b> "
         + selectedRisk
@@ -509,7 +592,7 @@ controls = column(
 
 
 # ============================================================
-# FINAL DASHBOARD
+# FINAL LAYOUT
 # ============================================================
 
 layout = row(
