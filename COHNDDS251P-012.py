@@ -3,6 +3,7 @@ import pandas as pd
 
 from bokeh.io import curdoc
 from bokeh.plotting import figure
+
 from bokeh.models import (
     ColumnDataSource,
     HoverTool,
@@ -14,6 +15,7 @@ from bokeh.models import (
     CustomJS,
     Div
 )
+
 from bokeh.palettes import YlOrRd
 from bokeh.layouts import row, column
 
@@ -31,7 +33,7 @@ gdf = gpd.read_file(url)
 
 
 # ============================================================
-# TASK 2: CONVERT TO WEB MERCATOR
+# TASK 2: GEOPANDAS + WEB MERCATOR
 # ============================================================
 
 gdf = gdf.to_crs(epsg=3857)
@@ -71,8 +73,13 @@ gdf["mag"] = gdf["mag"].fillna(0)
 # ============================================================
 # RISK CLASSIFICATION
 # ============================================================
+# 0 = Low Risk
+# 1 = Medium Risk
+# 2 = High Risk
+# ============================================================
 
 gdf["risk"] = "Low Risk"
+gdf["risk_code"] = 0
 
 gdf.loc[
     gdf["mag"] >= 2.5,
@@ -80,9 +87,19 @@ gdf.loc[
 ] = "Medium Risk"
 
 gdf.loc[
+    gdf["mag"] >= 2.5,
+    "risk_code"
+] = 1
+
+gdf.loc[
     gdf["mag"] >= 4.5,
     "risk"
 ] = "High Risk"
+
+gdf.loc[
+    gdf["mag"] >= 4.5,
+    "risk_code"
+] = 2
 
 
 # ============================================================
@@ -97,7 +114,8 @@ df = gdf[
         "mag",
         "time_dt",
         "time_str",
-        "risk"
+        "risk",
+        "risk_code"
     ]
 ].dropna(
     subset=[
@@ -109,27 +127,33 @@ df = gdf[
 
 
 # ============================================================
-# CREATE DATE-ONLY COLUMN
-# ============================================================
-
-df["date"] = (
-    df["time_dt"]
-    .dt.tz_convert(None)
-    .dt.normalize()
-)
-
-
-# ============================================================
-# CREATE TIME IN MILLISECONDS
-#
-# Used only for JavaScript filtering.
+# CREATE UNIX TIME FOR FILTERING
 # ============================================================
 
 df["time_ms"] = (
-    df["time_dt"]
-    .astype("int64")
-    // 1_000_000
+    df["time_dt"].astype("int64") // 1_000_000
 ).astype("int64")
+
+
+# ============================================================
+# FIND DATA DATE RANGE
+# ============================================================
+
+min_date = (
+    df["time_dt"]
+    .dt.tz_convert(None)
+    .min()
+    .normalize()
+    .to_pydatetime()
+)
+
+max_date = (
+    df["time_dt"]
+    .dt.tz_convert(None)
+    .max()
+    .normalize()
+    .to_pydatetime()
+)
 
 
 # ============================================================
@@ -140,28 +164,30 @@ full_source = ColumnDataSource(
     data={
         "x": df["x"].tolist(),
         "y": df["y"].tolist(),
-        "place": df["place"].tolist(),
-        "mag": df["mag"].tolist(),
-        "time_str": df["time_str"].tolist(),
-        "risk": df["risk"].tolist(),
-        "time_ms": df["time_ms"].tolist()
+        "place": df["place"].astype(str).tolist(),
+        "mag": df["mag"].astype(float).tolist(),
+        "time_str": df["time_str"].astype(str).tolist(),
+        "risk": df["risk"].astype(str).tolist(),
+        "risk_code": df["risk_code"].astype(int).tolist(),
+        "time_ms": df["time_ms"].astype(int).tolist()
     }
 )
 
 
 # ============================================================
-# DISPLAY DATA SOURCE
+# DISPLAY SOURCE
 # ============================================================
 
 source = ColumnDataSource(
     data={
         "x": df["x"].tolist(),
         "y": df["y"].tolist(),
-        "place": df["place"].tolist(),
-        "mag": df["mag"].tolist(),
-        "time_str": df["time_str"].tolist(),
-        "risk": df["risk"].tolist(),
-        "time_ms": df["time_ms"].tolist()
+        "place": df["place"].astype(str).tolist(),
+        "mag": df["mag"].astype(float).tolist(),
+        "time_str": df["time_str"].astype(str).tolist(),
+        "risk": df["risk"].astype(str).tolist(),
+        "risk_code": df["risk_code"].astype(int).tolist(),
+        "time_ms": df["time_ms"].astype(int).tolist()
     }
 )
 
@@ -193,7 +219,7 @@ p = figure(
 
 
 # ============================================================
-# BASE MAP
+# CARTO BASEMAP
 # ============================================================
 
 p.add_tile(
@@ -216,13 +242,9 @@ p.add_tile(
 mapper = LinearColorMapper(
     palette=YlOrRd[9],
 
-    low=float(
-        df["mag"].min()
-    ),
+    low=float(df["mag"].min()),
 
-    high=float(
-        df["mag"].max()
-    )
+    high=float(df["mag"].max())
 )
 
 
@@ -286,15 +308,7 @@ p.add_tools(
 
 # ============================================================
 # TASK 3: DATE RANGE SLIDER
-#
-# IMPORTANT:
-# DateRangeSlider uses actual datetime values.
-# step=1 means one day.
 # ============================================================
-
-min_date = df["date"].min().to_pydatetime()
-
-max_date = df["date"].max().to_pydatetime()
 
 date_slider = DateRangeSlider(
     title="Time Filter",
@@ -365,55 +379,69 @@ status = Div(
 # ============================================================
 
 callback = CustomJS(
-    args=dict(
-        full_source=full_source,
-        source=source,
-        slider=date_slider,
-        risk_filter=risk_filter,
-        status=status
-    ),
+    args={
+        "full_source": full_source,
+        "source": source,
+        "date_slider": date_slider,
+        "risk_filter": risk_filter,
+        "status": status
+    },
 
     code="""
 
-    // --------------------------------------------------------
+    // ========================================================
     // GET COMPLETE DATA
-    // --------------------------------------------------------
+    // ========================================================
 
     const full = full_source.data;
 
 
-    // --------------------------------------------------------
-    // BOKEH DATE RANGE SLIDER VALUES
-    // are converted to JavaScript Date objects
-    // --------------------------------------------------------
+    // ========================================================
+    // GET DATE RANGE
+    //
+    // Bokeh provides the selected dates as date values.
+    // Convert them safely to milliseconds.
+    // ========================================================
 
-    const startDate =
-        new Date(slider.value[0]);
+    const start_ms =
+        new Date(
+            date_slider.value[0]
+        ).getTime();
 
-    const endDate =
-        new Date(slider.value[1]);
-
-
-    // Convert them to milliseconds
-
-    const startMs =
-        startDate.getTime();
-
-    const endMs =
-        endDate.getTime();
+    const end_ms =
+        new Date(
+            date_slider.value[1]
+        ).getTime();
 
 
-    // --------------------------------------------------------
-    // SELECTED RISK
-    // --------------------------------------------------------
+    // ========================================================
+    // GET RISK SELECTION
+    // ========================================================
 
     const selectedRisk =
         risk_filter.value;
 
 
-    // --------------------------------------------------------
-    // RESULT DATA
-    // --------------------------------------------------------
+    // Convert risk label to numeric code
+
+    let selectedCode = -1;
+
+    if (selectedRisk === "Low Risk") {
+        selectedCode = 0;
+    }
+
+    if (selectedRisk === "Medium Risk") {
+        selectedCode = 1;
+    }
+
+    if (selectedRisk === "High Risk") {
+        selectedCode = 2;
+    }
+
+
+    // ========================================================
+    // RESULT
+    // ========================================================
 
     const result = {
         x: [],
@@ -422,13 +450,14 @@ callback = CustomJS(
         mag: [],
         time_str: [],
         risk: [],
+        risk_code: [],
         time_ms: []
     };
 
 
-    // --------------------------------------------------------
-    // FILTER RECORDS
-    // --------------------------------------------------------
+    // ========================================================
+    // FILTER EACH EARTHQUAKE
+    // ========================================================
 
     for (
         let i = 0;
@@ -440,46 +469,40 @@ callback = CustomJS(
             Number(full.time_ms[i]);
 
         const earthquakeRisk =
-            String(full.risk[i]);
+            Number(full.risk_code[i]);
 
 
-        // Time filter
+        // ----------------------------------------------------
+        // DATE CONDITION
+        // ----------------------------------------------------
 
-        const timeOK =
-            earthquakeTime >= startMs &&
-            earthquakeTime <= endMs;
-
-
-        // Risk filter
-
-        let riskOK = true;
-
-        if (selectedRisk !== "All") {
-
-            riskOK =
-                earthquakeRisk === selectedRisk;
-        }
+        const dateOK =
+            earthquakeTime >= start_ms &&
+            earthquakeTime <= end_ms;
 
 
-        // Both conditions
+        // ----------------------------------------------------
+        // RISK CONDITION
+        // ----------------------------------------------------
 
-        if (timeOK && riskOK) {
+        const riskOK =
+            selectedCode === -1 ||
+            earthquakeRisk === selectedCode;
 
-            result.x.push(
-                full.x[i]
-            );
 
-            result.y.push(
-                full.y[i]
-            );
+        // ----------------------------------------------------
+        // BOTH CONDITIONS
+        // ----------------------------------------------------
 
-            result.place.push(
-                full.place[i]
-            );
+        if (dateOK && riskOK) {
 
-            result.mag.push(
-                full.mag[i]
-            );
+            result.x.push(full.x[i]);
+
+            result.y.push(full.y[i]);
+
+            result.place.push(full.place[i]);
+
+            result.mag.push(full.mag[i]);
 
             result.time_str.push(
                 full.time_str[i]
@@ -489,6 +512,10 @@ callback = CustomJS(
                 full.risk[i]
             );
 
+            result.risk_code.push(
+                full.risk_code[i]
+            );
+
             result.time_ms.push(
                 full.time_ms[i]
             );
@@ -496,19 +523,21 @@ callback = CustomJS(
     }
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // UPDATE MAP
-    // --------------------------------------------------------
+    // ========================================================
 
     source.data = result;
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // DISPLAY DATES
-    // --------------------------------------------------------
+    // ========================================================
 
     const startText =
-        startDate.toLocaleDateString(
+        new Date(
+            start_ms
+        ).toLocaleDateString(
             "en-GB",
             {
                 day: "2-digit",
@@ -518,7 +547,9 @@ callback = CustomJS(
         );
 
     const endText =
-        endDate.toLocaleDateString(
+        new Date(
+            end_ms
+        ).toLocaleDateString(
             "en-GB",
             {
                 day: "2-digit",
@@ -528,9 +559,9 @@ callback = CustomJS(
         );
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // UPDATE STATUS
-    // --------------------------------------------------------
+    // ========================================================
 
     status.text =
         "<b>Risk:</b> "
@@ -584,7 +615,7 @@ controls = column(
 
 
 # ============================================================
-# TASK 5: FINAL LAYOUT
+# TASK 5: FINAL DASHBOARD
 # ============================================================
 
 layout = row(
