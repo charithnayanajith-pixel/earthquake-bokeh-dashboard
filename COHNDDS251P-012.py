@@ -79,6 +79,8 @@ p = figure(
     title="USGS Earthquake Interactive Geo Dashboard",
     x_axis_type="mercator",
     y_axis_type="mercator",
+    x_range=(-20000000, 20000000),
+    y_range=(-10000000, 10000000),
     width=900,
     height=600,
     tools="pan,wheel_zoom,reset,save"
@@ -194,7 +196,7 @@ def update(attr, old, new):
             filtered["risk"] == risk_filter.value
         ]
 
-    source.data = filtered
+    source.data = ColumnDataSource.from_df(filtered)
 
 
 date_slider.on_change(
